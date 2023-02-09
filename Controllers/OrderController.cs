@@ -1,5 +1,7 @@
 ﻿using Dapper;
 using DependencyStore.Models;
+using DependencyStore.Repositories.Contracts;
+using DependencyStore.Services.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using RestSharp;
@@ -8,30 +10,36 @@ namespace DependencyStore.Controllers;
 
 public class OrderController : ControllerBase
 {
+    private readonly ICustomerRepository _customerRepository;
+    private readonly IDeliveryFeeService _deliveryFeeService;
+    private readonly IPromoCodeRepository _promoCodeRepository;
+
+    public OrderController(
+        ICustomerRepository customerRepository,
+        IDeliveryFeeService deliveryFeeService,
+        IPromoCodeRepository promoCodeRepository
+        )
+    {
+        _customerRepository = customerRepository;
+        _deliveryFeeService = deliveryFeeService;
+        _promoCodeRepository = promoCodeRepository; 
+    }
+
+
     [Route("v1/orders")]
     [HttpPost]
     public async Task<IActionResult> Place(string customerId, string zipCode, string promoCode, int[] products)
     {
         // #1 - Recupera o cliente
-        Customer customer = null;
-        await using (var conn = new SqlConnection("CONN_STRING"))
+       var customer = await _customerRepository.GetByIdAsync(customerId);
+        if (customer == null)
         {
-            const string query = "SELECT [Id], [Name], [Email] FROM CUSTOMER WHERE ID=@id";
-            customer = await conn.QueryFirstAsync<Customer>(query, new { id = customerId });
+            return NotFound();
         }
 
         // #2 - Calcula o frete
-        decimal deliveryFee = 0;
-        var client = new RestClient("https://consultafrete.io/cep/");
-        var request = new RestRequest()
-            .AddJsonBody(new
-            {
-                zipCode
-            });
-        deliveryFee = await client.PostAsync<decimal>(request, new CancellationToken());
-        // Nunca é menos que R$ 5,00
-        if (deliveryFee < 5)
-            deliveryFee = 5;
+        var deliveryFee = await _deliveryFeeService.GetDeliveryFeeAsync(zipCode);
+        var cupon = await _promoCodeRepository.GetPromoCodeAsync(promoCode);
 
         // #3 - Calcula o total dos produtos
         decimal subTotal = 0;
